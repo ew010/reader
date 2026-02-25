@@ -135,3 +135,37 @@ jobs:
           name: windows-release
           path: build/windows/x64/runner/Release/
           if-no-files-found: error
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    needs: quality
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.2
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS app
+        run: flutter build macos --release
+
+      - name: Pack macOS app artifact
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r Runner.app.zip Runner.app
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-runner-app
+          path: build/macos/Build/Products/Release/Runner.app.zip
+          if-no-files-found: error
