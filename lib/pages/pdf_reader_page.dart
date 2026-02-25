@@ -1,0 +1,458 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+import 'package:pdfx/pdfx.dart';
+
+import '../models/annotation.dart';
+import '../models/rendered_page.dart';
+import '../models/screenshot_item.dart';
+import '../services/pdf_service.dart';
+import '../services/storage_service.dart';
+import '../widgets/annotatable_page_widget.dart';
+import '../widgets/screenshot_panel.dart';
+
+class PdfReaderPage extends StatefulWidget {
+  const PdfReaderPage({super.key});
+
+  @override
+  State<PdfReaderPage> createState() => _PdfReaderPageState();
+}
+
+class _PdfReaderPageState extends State<PdfReaderPage> {
+  final PdfService _pdfService = PdfService();
+  final StorageService _storageService = StorageService();
+
+  PdfDocument? _document;
+  String? _pdfPath;
+  int _currentPage = 1;
+  double _zoom = 2.2;
+  bool _continuousMode = false;
+  bool _onlyCurrentPageScreenshots = false;
+
+  ToolType _tool = ToolType.select;
+  Color _color = Colors.red;
+  double _penWidth = 2;
+  double _fontSize = 16;
+
+  String? _screenshotDir;
+  String? _annotationsFile;
+  String? _notesFile;
+
+  final Map<int, List<AnnotationItem>> _allAnnotations = {};
+  final List<ScreenshotItem> _screenshots = [];
+
+  @override
+  void dispose() {
+    _saveAnnotations();
+    _saveScreenshotNotes();
+    _document?.close();
+    super.dispose();
+  }
+
+  Future<void> _openPdf() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (result == null || result.files.single.path == null) {
+      return;
+    }
+
+    final path = result.files.single.path!;
+    final doc = await PdfDocument.openFile(path);
+    final paths = _storageService.buildPaths(path);
+    await _storageService.ensureScreenshotDir(paths.screenshotDir);
+
+    _document?.close();
+    _pdfService.clearCache();
+    _allAnnotations.clear();
+    _screenshots.clear();
+
+    setState(() {
+      _document = doc;
+      _pdfPath = path;
+      _screenshotDir = paths.screenshotDir;
+      _annotationsFile = paths.annotationsFile;
+      _notesFile = paths.notesFile;
+      _currentPage = 1;
+    });
+
+    await _loadAnnotations();
+    await _loadScreenshots();
+    if (mounted) setState(() {});
+  }
+
+  Future<RenderedPage> _renderPage(int page) async {
+    final doc = _document;
+    if (doc == null) throw StateError('No PDF open');
+    return _pdfService.renderPage(document: doc, page: page, zoom: _zoom);
+  }
+
+  Future<void> _changeZoom(double scale) async {
+    if (_document == null) return;
+    setState(() {
+      _zoom = (_zoom * scale).clamp(0.5, 5.0);
+      _pdfService.clearCache();
+    });
+  }
+
+  void _setTool(ToolType tool) {
+    setState(() {
+      _tool = tool;
+    });
+  }
+
+  List<ScreenshotItem> get _visibleScreenshots {
+    if (!_onlyCurrentPageScreenshots) return _screenshots;
+    return _screenshots.where((e) => e.page == _currentPage).toList();
+  }
+
+  Future<void> _onSelectionCaptured({
+    required int page,
+    required Rect rect,
+    required Uint8List pngBytes,
+  }) async {
+    final dir = _screenshotDir;
+    if (dir == null) return;
+
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final fileName = 'screenshot_${page}_$ts.png';
+    final filePath = p.join(dir, fileName);
+    await File(filePath).writeAsBytes(pngBytes, flush: true);
+
+    setState(() {
+      _screenshots.add(ScreenshotItem(path: filePath, page: page, rect: rect));
+      _screenshots.sort((a, b) => a.page.compareTo(b.page));
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('截图已保存: $filePath')),
+      );
+    }
+  }
+
+  Future<void> _saveAnnotations() async {
+    final path = _annotationsFile;
+    if (path == null || _document == null) return;
+    await _storageService.saveAnnotations(path, _allAnnotations);
+  }
+
+  Future<void> _loadAnnotations() async {
+    final path = _annotationsFile;
+    if (path == null) return;
+    final loaded = await _storageService.loadAnnotations(path);
+    _allAnnotations
+      ..clear()
+      ..addAll(loaded);
+  }
+
+  Future<void> _loadScreenshots() async {
+    final dir = _screenshotDir;
+    final notesPath = _notesFile;
+    if (dir == null || notesPath == null) return;
+
+    final notes = await _storageService.readScreenshotNotes(notesPath);
+    final loaded = await _storageService.loadScreenshots(screenshotDir: dir, notes: notes);
+    _screenshots
+      ..clear()
+      ..addAll(loaded);
+  }
+
+  Future<void> _saveScreenshotNotes() async {
+    final path = _notesFile;
+    if (path == null) return;
+    await _storageService.saveScreenshotNotes(path, _screenshots);
+  }
+
+  Future<void> _exportAnnotations() async {
+    if (_document == null || _pdfPath == null) return;
+    await _saveAnnotations();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('标注已导出到 $_annotationsFile')),
+      );
+    }
+  }
+
+  Future<void> _importAnnotations() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (picked == null || picked.files.single.path == null) return;
+
+    final loaded = await _storageService.loadAnnotations(picked.files.single.path!);
+    _allAnnotations
+      ..clear()
+      ..addAll(loaded);
+
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('标注导入成功')),
+      );
+    }
+  }
+
+  Future<void> _editScreenshotNote(ScreenshotItem item) async {
+    final controller = TextEditingController(text: item.note);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('备注'),
+        content: TextField(controller: controller, minLines: 3, maxLines: 8),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      setState(() => item.note = controller.text);
+      await _saveScreenshotNotes();
+    }
+  }
+
+  Future<void> _deleteScreenshot(ScreenshotItem item) async {
+    final file = File(item.path);
+    if (await file.exists()) {
+      await file.delete();
+    }
+    setState(() {
+      _screenshots.remove(item);
+    });
+    await _saveScreenshotNotes();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final doc = _document;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_pdfPath == null ? 'PDF阅读器(Flutter)' : 'PDF阅读器 - ${p.basename(_pdfPath!)}'),
+      ),
+      body: Column(
+        children: [
+          _buildToolbar(),
+          Expanded(
+            child: doc == null
+                ? const Center(child: Text('点击“打开PDF”开始'))
+                : Row(
+                    children: [
+                      Expanded(child: _buildPdfArea(doc)),
+                      SizedBox(
+                        width: 340,
+                        child: ScreenshotPanel(
+                          screenshots: _visibleScreenshots,
+                          onlyCurrentPage: _onlyCurrentPageScreenshots,
+                          onOnlyCurrentPageChanged: (v) => setState(() => _onlyCurrentPageScreenshots = v),
+                          onTap: (shot) => setState(() {
+                            _continuousMode = false;
+                            _currentPage = shot.page;
+                          }),
+                          onEditNote: _editScreenshotNote,
+                          onDelete: _deleteScreenshot,
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolbar() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Wrap(
+          spacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            FilledButton(onPressed: _openPdf, child: const Text('打开PDF')),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('单页')),
+                ButtonSegment(value: true, label: Text('连续')),
+              ],
+              selected: {_continuousMode},
+              onSelectionChanged: (s) => setState(() => _continuousMode = s.first),
+            ),
+            DropdownButton<ToolType>(
+              value: _tool,
+              items: ToolType.values.map((e) => DropdownMenuItem(value: e, child: Text(_toolLabel(e)))).toList(),
+              onChanged: (v) => v == null ? null : _setTool(v),
+            ),
+            DropdownButton<Color>(
+              value: _color,
+              items: const [
+                DropdownMenuItem(value: Colors.red, child: Text('红色')),
+                DropdownMenuItem(value: Colors.orange, child: Text('橙色')),
+                DropdownMenuItem(value: Colors.yellow, child: Text('黄色')),
+                DropdownMenuItem(value: Colors.green, child: Text('绿色')),
+                DropdownMenuItem(value: Colors.blue, child: Text('蓝色')),
+                DropdownMenuItem(value: Colors.black, child: Text('黑色')),
+              ],
+              onChanged: (v) => v == null ? null : setState(() => _color = v),
+            ),
+            SizedBox(
+              width: 120,
+              child: Row(
+                children: [
+                  const Text('笔触'),
+                  Expanded(
+                    child: Slider(
+                      min: 1,
+                      max: 20,
+                      value: _penWidth,
+                      onChanged: (v) => setState(() => _penWidth = v),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 120,
+              child: Row(
+                children: [
+                  const Text('字号'),
+                  Expanded(
+                    child: Slider(
+                      min: 8,
+                      max: 48,
+                      value: _fontSize,
+                      onChanged: (v) => setState(() => _fontSize = v),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            OutlinedButton(onPressed: () => _changeZoom(1.2), child: const Text('+')),
+            OutlinedButton(onPressed: () => _changeZoom(1 / 1.2), child: const Text('-')),
+            OutlinedButton(onPressed: _exportAnnotations, child: const Text('导出标注')),
+            OutlinedButton(onPressed: _importAnnotations, child: const Text('导入标注')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPdfArea(PdfDocument doc) {
+    if (_continuousMode) {
+      return ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: doc.pagesCount,
+        itemBuilder: (context, index) {
+          final page = index + 1;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: FutureBuilder<RenderedPage>(
+              future: _renderPage(page),
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const SizedBox(height: 220, child: Center(child: CircularProgressIndicator()));
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('第 $page 页', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    AnnotatablePageWidget(
+                      key: ValueKey('c_page_$page'),
+                      page: page,
+                      imageBytes: snap.data!.bytes,
+                      imageSize: snap.data!.size,
+                      tool: _tool,
+                      color: _color,
+                      penWidth: _penWidth,
+                      fontSize: _fontSize,
+                      annotations: _allAnnotations[page] ?? const [],
+                      onChanged: (list) => setState(() => _allAnnotations[page] = list),
+                      onSelectionCaptured: _onSelectionCaptured,
+                    ),
+                  ],
+                );
+              },
+            ),
+          );
+        },
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: FutureBuilder<RenderedPage>(
+              future: _renderPage(_currentPage),
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const CircularProgressIndicator();
+                }
+                return SingleChildScrollView(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: AnnotatablePageWidget(
+                      key: ValueKey('s_page_$_currentPage'),
+                      page: _currentPage,
+                      imageBytes: snap.data!.bytes,
+                      imageSize: snap.data!.size,
+                      tool: _tool,
+                      color: _color,
+                      penWidth: _penWidth,
+                      fontSize: _fontSize,
+                      annotations: _allAnnotations[_currentPage] ?? const [],
+                      onChanged: (list) => setState(() => _allAnnotations[_currentPage] = list),
+                      onSelectionCaptured: _onSelectionCaptured,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                onPressed: _currentPage > 1 ? () => setState(() => _currentPage--) : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text('$_currentPage / ${doc.pagesCount}'),
+              IconButton(
+                onPressed: _currentPage < doc.pagesCount ? () => setState(() => _currentPage++) : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _toolLabel(ToolType tool) {
+    switch (tool) {
+      case ToolType.view:
+        return '查看';
+      case ToolType.select:
+        return '圈选';
+      case ToolType.draw:
+        return '涂鸦';
+      case ToolType.highlight:
+        return '高亮';
+      case ToolType.eraser:
+        return '橡皮';
+      case ToolType.text:
+        return '文字';
+    }
+  }
+}

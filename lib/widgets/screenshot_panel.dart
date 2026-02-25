@@ -1,0 +1,77 @@
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+
+import '../models/screenshot_item.dart';
+
+class ScreenshotPanel extends StatelessWidget {
+  const ScreenshotPanel({
+    super.key,
+    required this.screenshots,
+    required this.onlyCurrentPage,
+    required this.onOnlyCurrentPageChanged,
+    required this.onTap,
+    required this.onEditNote,
+    required this.onDelete,
+  });
+
+  final List<ScreenshotItem> screenshots;
+  final bool onlyCurrentPage;
+  final ValueChanged<bool> onOnlyCurrentPageChanged;
+  final ValueChanged<ScreenshotItem> onTap;
+  final ValueChanged<ScreenshotItem> onEditNote;
+  final ValueChanged<ScreenshotItem> onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(border: Border(left: BorderSide(color: Colors.grey.shade300))),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                const Expanded(child: Text('截图列表')),
+                const Text('仅当前页'),
+                Checkbox(
+                  value: onlyCurrentPage,
+                  onChanged: (v) => onOnlyCurrentPageChanged(v ?? false),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: screenshots.length,
+              itemBuilder: (context, index) {
+                final shot = screenshots[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: ListTile(
+                    leading: const Icon(Icons.image_outlined),
+                    title: Text('第 ${shot.page} 页'),
+                    subtitle: Text(shot.note.isEmpty ? p.basename(shot.path) : shot.note),
+                    onTap: () => onTap(shot),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (v) {
+                        if (v == 'note') {
+                          onEditNote(shot);
+                        } else if (v == 'delete') {
+                          onDelete(shot);
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(value: 'note', child: Text('备注')),
+                        PopupMenuItem(value: 'delete', child: Text('删除')),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
