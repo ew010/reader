@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -161,18 +162,29 @@ class _MindMapDialogState extends State<MindMapDialog> {
     if (node == null || node.parentId == null) return;
 
     final movingRect = _nodeRect(node);
+    final movingCenter = movingRect.center;
     String? targetParentId;
+    double bestScore = -1;
     for (final candidate in _localNodes.values) {
       if (candidate.id == nodeId) continue;
       if (_isDescendant(potentialDescendantId: candidate.id, ancestorId: nodeId)) continue;
-      if (movingRect.overlaps(_nodeRect(candidate).inflate(24))) {
+      final candidateRect = _nodeRect(candidate);
+      final isCenterInside = candidateRect.inflate(18).contains(movingCenter);
+      final overlaps = movingRect.overlaps(candidateRect.inflate(24));
+      if (!isCenterInside && !overlaps) continue;
+
+      final dx = movingCenter.dx - candidateRect.center.dx;
+      final dy = movingCenter.dy - candidateRect.center.dy;
+      final distance = math.sqrt(dx * dx + dy * dy);
+      final score = 1 / (1 + distance);
+      if (score > bestScore) {
+        bestScore = score;
         targetParentId = candidate.id;
-        break;
       }
     }
 
-    targetParentId ??= 'root';
-    if (targetParentId == node.parentId) return;
+    // Drop target not hit: keep original parent unchanged.
+    if (targetParentId == null || targetParentId == node.parentId) return;
 
     setState(() {
       _localNodes[nodeId] = node.copyWith(parentId: targetParentId);

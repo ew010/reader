@@ -684,20 +684,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         children: [
           _buildToolbar(),
           Expanded(
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 300,
-                  child: _buildLibraryPanel(),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: doc == null
-                      ? const Center(child: Text('点击“打开PDF”开始'))
-                      : _buildReaderContent(doc),
-                ),
-              ],
-            ),
+            child: doc == null
+                ? const Center(child: Text('点击“打开PDF”开始'))
+                : _buildReaderContent(doc),
           ),
         ],
       ),
@@ -714,6 +703,10 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             FilledButton(onPressed: _openPdf, child: const Text('打开PDF')),
+            OutlinedButton(
+              onPressed: _openLibraryDialog,
+              child: const Text('文件列表'),
+            ),
             DropdownButton<ViewMode>(
               value: _viewMode,
               items: const [
@@ -793,6 +786,20 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
             OutlinedButton(onPressed: _exportAnnotations, child: const Text('导出标注')),
             OutlinedButton(onPressed: _importAnnotations, child: const Text('导入标注')),
           ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openLibraryDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        child: SizedBox(
+          width: 420,
+          height: 680,
+          child: _buildLibraryPanel(),
         ),
       ),
     );

@@ -1,10 +1,16 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
 import '../models/rendered_page.dart';
 
 class PdfService {
+  static const int _maxRenderCacheEntries = 24;
+  static const double _maxRenderPixels = 16 * 1000 * 1000; // 16MP
+
   final Map<String, RenderedPage> _renderCache = {};
+  final List<String> _renderCacheOrder = [];
   final Map<int, double> _pageWidthCache = {};
 
   Future<RenderedPage> renderPage({
@@ -14,11 +20,20 @@ class PdfService {
   }) async {
     final key = '$page@${zoom.toStringAsFixed(2)}';
     final cached = _renderCache[key];
-    if (cached != null) return cached;
+    if (cached != null) {
+      _touchCacheKey(key);
+      return cached;
+    }
 
     final pdfPage = await document.getPage(page);
-    final w = (pdfPage.width * zoom).clamp(1, 8000).toDouble();
-    final h = (pdfPage.height * zoom).clamp(1, 8000).toDouble();
+    final width = (pdfPage.width * zoom).clamp(1, 8000).toDouble();
+    final height = (pdfPage.height * zoom).clamp(1, 8000).toDouble();
+    final pixelCount = width * height;
+    final scale = pixelCount > _maxRenderPixels
+        ? math.sqrt(_maxRenderPixels / pixelCount)
+        : 1.0;
+    final w = (width * scale).clamp(1, 8000).toDouble();
+    final h = (height * scale).clamp(1, 8000).toDouble();
     final image = await pdfPage.render(width: w, height: h, format: PdfPageImageFormat.png);
     await pdfPage.close();
 
@@ -31,6 +46,8 @@ class PdfService {
       size: Size((image.width ?? 0).toDouble(), (image.height ?? 0).toDouble()),
     );
     _renderCache[key] = rendered;
+    _touchCacheKey(key);
+    _evictRenderCacheIfNeeded();
     return rendered;
   }
 
@@ -48,10 +65,26 @@ class PdfService {
     return width;
   }
 
-  void clearRenderCache() => _renderCache.clear();
+  void _touchCacheKey(String key) {
+    _renderCacheOrder.remove(key);
+    _renderCacheOrder.add(key);
+  }
+
+  void _evictRenderCacheIfNeeded() {
+    while (_renderCacheOrder.length > _maxRenderCacheEntries) {
+      final oldestKey = _renderCacheOrder.removeAt(0);
+      _renderCache.remove(oldestKey);
+    }
+  }
+
+  void clearRenderCache() {
+    _renderCache.clear();
+    _renderCacheOrder.clear();
+  }
 
   void clearDocumentCache() {
     _renderCache.clear();
+    _renderCacheOrder.clear();
     _pageWidthCache.clear();
   }
 }
