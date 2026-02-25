@@ -96,6 +96,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
   final Map<int, List<AnnotationItem>> _allAnnotations = {};
   final List<ScreenshotItem> _screenshots = [];
+  final Set<String> _hiddenMindMapShotNodeIds = {};
   List<LibraryFolder> _libraryFolders = [];
   String? _selectedFolderId;
   bool _libraryReady = false;
@@ -143,6 +144,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     _pdfService.clearDocumentCache();
     _allAnnotations.clear();
     _screenshots.clear();
+    _hiddenMindMapShotNodeIds.clear();
     _mindMapNodes
       ..clear()
       ..addAll({
@@ -538,11 +540,14 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       final id = _mindMapNodeIdForShot(shot);
       keepIds.add(id);
       final existing = _mindMapNodes[id];
+      if (_hiddenMindMapShotNodeIds.contains(id)) {
+        index++;
+        continue;
+      }
       if (existing != null) {
         _mindMapNodes[id] = existing.copyWith(
           title: 'P${shot.page} - ${p.basename(shot.path)}',
           imagePath: shot.path,
-          parentId: 'root',
         );
       } else {
         _mindMapNodes[id] = MindMapNode(
@@ -560,6 +565,8 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     for (final id in removeIds) {
       _mindMapNodes.remove(id);
     }
+    final validShotNodeIds = _screenshots.map(_mindMapNodeIdForShot).toSet();
+    _hiddenMindMapShotNodeIds.removeWhere((id) => !validShotNodeIds.contains(id));
   }
 
   void _moveMindMapNode(String nodeId, Offset newOffset) {
@@ -576,8 +583,44 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       builder: (ctx) => MindMapDialog(
         nodes: _mindMapNodes,
         onNodeMoved: _moveMindMapNode,
+        onNodeRenamed: _renameMindMapNode,
+        onNodeDeleted: _deleteMindMapNode,
+        onNodeReparented: _reparentMindMapNode,
       ),
     );
+  }
+
+  void _renameMindMapNode(String nodeId, String newTitle) {
+    final node = _mindMapNodes[nodeId];
+    if (node == null) return;
+    setState(() {
+      _mindMapNodes[nodeId] = node.copyWith(title: newTitle);
+    });
+  }
+
+  void _deleteMindMapNode(String nodeId) {
+    final node = _mindMapNodes[nodeId];
+    if (node == null || node.parentId == null) return;
+    setState(() {
+      final children = _mindMapNodes.values.where((n) => n.parentId == nodeId).toList();
+      for (final child in children) {
+        _mindMapNodes[child.id] = child.copyWith(parentId: 'root');
+      }
+      _mindMapNodes.remove(nodeId);
+      if (nodeId.startsWith('shot:')) {
+        _hiddenMindMapShotNodeIds.add(nodeId);
+      }
+    });
+  }
+
+  void _reparentMindMapNode(String nodeId, String? newParentId) {
+    final node = _mindMapNodes[nodeId];
+    if (node == null || node.parentId == null) return;
+    final parentId = newParentId ?? 'root';
+    if (!_mindMapNodes.containsKey(parentId) || parentId == nodeId) return;
+    setState(() {
+      _mindMapNodes[nodeId] = node.copyWith(parentId: parentId);
+    });
   }
 
   Future<void> _jumpToPage(PdfDocument doc) async {
