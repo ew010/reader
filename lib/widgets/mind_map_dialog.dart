@@ -335,16 +335,23 @@ class _MindMapNodeCard extends StatelessWidget {
               const SizedBox(height: 6),
               ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: Image.file(
-                  File(node.imagePath!),
+                child: Container(
                   width: double.infinity,
-                  height: 72,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    height: 72,
-                    color: Colors.grey.shade100,
-                    alignment: Alignment.center,
-                    child: const Text('图片缺失', style: TextStyle(fontSize: 11)),
+                  constraints: const BoxConstraints(
+                    minHeight: 90,
+                    maxHeight: 180,
+                  ),
+                  color: Colors.grey.shade100,
+                  child: Image.file(
+                    File(node.imagePath!),
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.high,
+                    errorBuilder: (_, __, ___) => const SizedBox(
+                      height: 90,
+                      child: Center(
+                        child: Text('图片缺失', style: TextStyle(fontSize: 11)),
+                      ),
+                    ),
                   ),
                 ),
               ),
