@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -9,6 +11,7 @@ class ScreenshotPanel extends StatelessWidget {
     required this.screenshots,
     required this.onlyCurrentPage,
     required this.onOnlyCurrentPageChanged,
+    required this.onOpenMindMap,
     required this.onTap,
     required this.onEditNote,
     required this.onDelete,
@@ -17,6 +20,7 @@ class ScreenshotPanel extends StatelessWidget {
   final List<ScreenshotItem> screenshots;
   final bool onlyCurrentPage;
   final ValueChanged<bool> onOnlyCurrentPageChanged;
+  final VoidCallback onOpenMindMap;
   final ValueChanged<ScreenshotItem> onTap;
   final ValueChanged<ScreenshotItem> onEditNote;
   final ValueChanged<ScreenshotItem> onDelete;
@@ -32,6 +36,11 @@ class ScreenshotPanel extends StatelessWidget {
             child: Row(
               children: [
                 const Expanded(child: Text('截图列表')),
+                OutlinedButton(
+                  onPressed: onOpenMindMap,
+                  child: const Text('思维导图'),
+                ),
+                const SizedBox(width: 8),
                 const Text('仅当前页'),
                 Checkbox(
                   value: onlyCurrentPage,
@@ -47,23 +56,53 @@ class ScreenshotPanel extends StatelessWidget {
                 final shot = screenshots[index];
                 return Card(
                   margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: ListTile(
-                    leading: const Icon(Icons.image_outlined),
-                    title: Text('第 ${shot.page} 页'),
-                    subtitle: Text(shot.note.isEmpty ? p.basename(shot.path) : shot.note),
+                  child: InkWell(
                     onTap: () => onTap(shot),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (v) {
-                        if (v == 'note') {
-                          onEditNote(shot);
-                        } else if (v == 'delete') {
-                          onDelete(shot);
-                        }
-                      },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(value: 'note', child: Text('备注')),
-                        PopupMenuItem(value: 'delete', child: Text('删除')),
-                      ],
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '第 ${shot.page} 页',
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ),
+                              ),
+                              PopupMenuButton<String>(
+                                onSelected: (v) {
+                                  if (v == 'note') {
+                                    onEditNote(shot);
+                                  } else if (v == 'delete') {
+                                    onDelete(shot);
+                                  }
+                                },
+                                itemBuilder: (context) => const [
+                                  PopupMenuItem(value: 'note', child: Text('备注')),
+                                  PopupMenuItem(value: 'delete', child: Text('删除')),
+                                ],
+                              ),
+                            ],
+                          ),
+                          Text(
+                            shot.note.isEmpty ? p.basename(shot.path) : shot.note,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Image.file(
+                              File(shot.path),
+                              fit: BoxFit.none,
+                              filterQuality: FilterQuality.high,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Text('图片加载失败'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 );

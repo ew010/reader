@@ -7,12 +7,16 @@ import 'package:path/path.dart' as p;
 import 'package:pdfx/pdfx.dart';
 
 import '../models/annotation.dart';
+import '../models/mind_map_node.dart';
 import '../models/rendered_page.dart';
 import '../models/screenshot_item.dart';
 import '../services/pdf_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/annotatable_page_widget.dart';
+import '../widgets/mind_map_dialog.dart';
 import '../widgets/screenshot_panel.dart';
+
+enum ViewMode { both, pdfOnly, screenshotsOnly }
 
 class PdfReaderPage extends StatefulWidget {
   const PdfReaderPage({super.key});
@@ -29,8 +33,10 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   String? _pdfPath;
   int _currentPage = 1;
   double _zoom = 2.2;
+  bool _autoFitWidth = true;
   bool _continuousMode = false;
   bool _onlyCurrentPageScreenshots = false;
+  ViewMode _viewMode = ViewMode.both;
 
   ToolType _tool = ToolType.select;
   Color _color = Colors.red;
@@ -43,6 +49,14 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
   final Map<int, List<AnnotationItem>> _allAnnotations = {};
   final List<ScreenshotItem> _screenshots = [];
+  final Map<String, MindMapNode> _mindMapNodes = {
+    'root': const MindMapNode(
+      id: 'root',
+      parentId: null,
+      title: '截图根节点',
+      offset: Offset(960, 80),
+    ),
+  };
 
   @override
   void dispose() {
@@ -67,9 +81,19 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     await _storageService.ensureScreenshotDir(paths.screenshotDir);
 
     _document?.close();
-    _pdfService.clearCache();
+    _pdfService.clearDocumentCache();
     _allAnnotations.clear();
     _screenshots.clear();
+    _mindMapNodes
+      ..clear()
+      ..addAll({
+        'root': const MindMapNode(
+          id: 'root',
+          parentId: null,
+          title: '截图根节点',
+          offset: Offset(960, 80),
+        ),
+      });
 
     setState(() {
       _document = doc;
@@ -82,20 +106,42 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
     await _loadAnnotations();
     await _loadScreenshots();
+    _syncMindMapFromScreenshots();
     if (mounted) setState(() {});
   }
 
-  Future<RenderedPage> _renderPage(int page) async {
+  Future<RenderedPage> _renderPage(int page, {required double viewportWidth}) async {
     final doc = _document;
     if (doc == null) throw StateError('No PDF open');
-    return _pdfService.renderPage(document: doc, page: page, zoom: _zoom);
+    final effectiveZoom = await _resolveZoom(page: page, viewportWidth: viewportWidth);
+    return _pdfService.renderPage(document: doc, page: page, zoom: effectiveZoom);
+  }
+
+  Future<double> _resolveZoom({required int page, required double viewportWidth}) async {
+    if (!_autoFitWidth) return _zoom;
+
+    final doc = _document;
+    if (doc == null) return _zoom;
+
+    final pageWidth = await _pdfService.getPageWidth(document: doc, page: page);
+    final horizontalPadding = _continuousMode ? 40.0 : 24.0;
+    final targetWidth = (viewportWidth - horizontalPadding).clamp(200.0, 4000.0);
+    return (targetWidth / pageWidth).clamp(0.5, 5.0);
   }
 
   Future<void> _changeZoom(double scale) async {
     if (_document == null) return;
     setState(() {
+      _autoFitWidth = false;
       _zoom = (_zoom * scale).clamp(0.5, 5.0);
-      _pdfService.clearCache();
+      _pdfService.clearRenderCache();
+    });
+  }
+
+  void _toggleAutoFitWidth() {
+    setState(() {
+      _autoFitWidth = !_autoFitWidth;
+      _pdfService.clearRenderCache();
     });
   }
 
@@ -127,6 +173,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       _screenshots.add(ScreenshotItem(path: filePath, page: page, rect: rect));
       _screenshots.sort((a, b) => a.page.compareTo(b.page));
     });
+    _syncMindMapFromScreenshots();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -160,6 +207,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     _screenshots
       ..clear()
       ..addAll(loaded);
+    _syncMindMapFromScreenshots();
   }
 
   Future<void> _saveScreenshotNotes() async {
@@ -225,7 +273,59 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     setState(() {
       _screenshots.remove(item);
     });
+    _syncMindMapFromScreenshots();
     await _saveScreenshotNotes();
+  }
+
+  String _mindMapNodeIdForShot(ScreenshotItem shot) => 'shot:${Uri.encodeComponent(shot.path)}';
+
+  void _syncMindMapFromScreenshots() {
+    final keepIds = <String>{'root'};
+    var index = 0;
+    for (final shot in _screenshots) {
+      final id = _mindMapNodeIdForShot(shot);
+      keepIds.add(id);
+      final existing = _mindMapNodes[id];
+      if (existing != null) {
+        _mindMapNodes[id] = existing.copyWith(
+          title: 'P${shot.page} - ${p.basename(shot.path)}',
+          imagePath: shot.path,
+          parentId: 'root',
+        );
+      } else {
+        _mindMapNodes[id] = MindMapNode(
+          id: id,
+          parentId: 'root',
+          title: 'P${shot.page} - ${p.basename(shot.path)}',
+          imagePath: shot.path,
+          offset: Offset(520 + (index % 4) * 220, 260 + (index ~/ 4) * 150),
+        );
+      }
+      index++;
+    }
+
+    final removeIds = _mindMapNodes.keys.where((id) => !keepIds.contains(id)).toList();
+    for (final id in removeIds) {
+      _mindMapNodes.remove(id);
+    }
+  }
+
+  void _moveMindMapNode(String nodeId, Offset newOffset) {
+    final node = _mindMapNodes[nodeId];
+    if (node == null) return;
+    setState(() {
+      _mindMapNodes[nodeId] = node.copyWith(offset: newOffset);
+    });
+  }
+
+  Future<void> _openMindMapDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => MindMapDialog(
+        nodes: _mindMapNodes,
+        onNodeMoved: _moveMindMapNode,
+      ),
+    );
   }
 
   @override
@@ -242,25 +342,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
           Expanded(
             child: doc == null
                 ? const Center(child: Text('点击“打开PDF”开始'))
-                : Row(
-                    children: [
-                      Expanded(child: _buildPdfArea(doc)),
-                      SizedBox(
-                        width: 340,
-                        child: ScreenshotPanel(
-                          screenshots: _visibleScreenshots,
-                          onlyCurrentPage: _onlyCurrentPageScreenshots,
-                          onOnlyCurrentPageChanged: (v) => setState(() => _onlyCurrentPageScreenshots = v),
-                          onTap: (shot) => setState(() {
-                            _continuousMode = false;
-                            _currentPage = shot.page;
-                          }),
-                          onEditNote: _editScreenshotNote,
-                          onDelete: _deleteScreenshot,
-                        ),
-                      ),
-                    ],
-                  ),
+                : _buildReaderContent(doc),
           ),
         ],
       ),
@@ -277,6 +359,18 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             FilledButton(onPressed: _openPdf, child: const Text('打开PDF')),
+            DropdownButton<ViewMode>(
+              value: _viewMode,
+              items: const [
+                DropdownMenuItem(value: ViewMode.both, child: Text('同时显示')),
+                DropdownMenuItem(value: ViewMode.pdfOnly, child: Text('仅PDF')),
+                DropdownMenuItem(value: ViewMode.screenshotsOnly, child: Text('仅截图')),
+              ],
+              onChanged: (v) {
+                if (v == null) return;
+                setState(() => _viewMode = v);
+              },
+            ),
             SegmentedButton<bool>(
               segments: const [
                 ButtonSegment(value: false, label: Text('单页')),
@@ -334,6 +428,11 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                 ],
               ),
             ),
+            FilterChip(
+              selected: _autoFitWidth,
+              label: const Text('自适应宽度'),
+              onSelected: (_) => _toggleAutoFitWidth(),
+            ),
             OutlinedButton(onPressed: () => _changeZoom(1.2), child: const Text('+')),
             OutlinedButton(onPressed: () => _changeZoom(1 / 1.2), child: const Text('-')),
             OutlinedButton(onPressed: _exportAnnotations, child: const Text('导出标注')),
@@ -344,98 +443,135 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     );
   }
 
-  Widget _buildPdfArea(PdfDocument doc) {
-    if (_continuousMode) {
-      return ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: doc.pagesCount,
-        itemBuilder: (context, index) {
-          final page = index + 1;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: FutureBuilder<RenderedPage>(
-              future: _renderPage(page),
-              builder: (context, snap) {
-                if (!snap.hasData) {
-                  return const SizedBox(height: 220, child: Center(child: CircularProgressIndicator()));
-                }
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('第 $page 页', style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    AnnotatablePageWidget(
-                      key: ValueKey('c_page_$page'),
-                      page: page,
-                      imageBytes: snap.data!.bytes,
-                      imageSize: snap.data!.size,
-                      tool: _tool,
-                      color: _color,
-                      penWidth: _penWidth,
-                      fontSize: _fontSize,
-                      annotations: _allAnnotations[page] ?? const [],
-                      onChanged: (list) => setState(() => _allAnnotations[page] = list),
-                      onSelectionCaptured: _onSelectionCaptured,
-                    ),
-                  ],
-                );
-              },
-            ),
-          );
-        },
-      );
-    }
+  Widget _buildReaderContent(PdfDocument doc) {
+    final screenshotPanel = SizedBox(
+      width: 340,
+      child: ScreenshotPanel(
+        screenshots: _visibleScreenshots,
+        onlyCurrentPage: _onlyCurrentPageScreenshots,
+        onOnlyCurrentPageChanged: (v) => setState(() => _onlyCurrentPageScreenshots = v),
+        onOpenMindMap: _openMindMapDialog,
+        onTap: (shot) => setState(() {
+          _continuousMode = false;
+          _currentPage = shot.page;
+        }),
+        onEditNote: _editScreenshotNote,
+        onDelete: _deleteScreenshot,
+      ),
+    );
 
-    return Column(
-      children: [
-        Expanded(
-          child: Center(
-            child: FutureBuilder<RenderedPage>(
-              future: _renderPage(_currentPage),
-              builder: (context, snap) {
-                if (!snap.hasData) {
-                  return const CircularProgressIndicator();
-                }
-                return SingleChildScrollView(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: AnnotatablePageWidget(
-                      key: ValueKey('s_page_$_currentPage'),
-                      page: _currentPage,
-                      imageBytes: snap.data!.bytes,
-                      imageSize: snap.data!.size,
-                      tool: _tool,
-                      color: _color,
-                      penWidth: _penWidth,
-                      fontSize: _fontSize,
-                      annotations: _allAnnotations[_currentPage] ?? const [],
-                      onChanged: (list) => setState(() => _allAnnotations[_currentPage] = list),
-                      onSelectionCaptured: _onSelectionCaptured,
-                    ),
-                  ),
-                );
-              },
+    switch (_viewMode) {
+      case ViewMode.both:
+        return Row(
+          children: [
+            Expanded(child: _buildPdfArea(doc)),
+            screenshotPanel,
+          ],
+        );
+      case ViewMode.pdfOnly:
+        return _buildPdfArea(doc);
+      case ViewMode.screenshotsOnly:
+        return screenshotPanel;
+    }
+  }
+
+  Widget _buildPdfArea(PdfDocument doc) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportWidth = constraints.maxWidth;
+        if (_continuousMode) {
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: doc.pagesCount,
+            itemBuilder: (context, index) {
+              final page = index + 1;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: FutureBuilder<RenderedPage>(
+                  future: _renderPage(page, viewportWidth: viewportWidth),
+                  builder: (context, snap) {
+                    if (!snap.hasData) {
+                      return const SizedBox(height: 220, child: Center(child: CircularProgressIndicator()));
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('第 $page 页', style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 8),
+                        AnnotatablePageWidget(
+                          key: ValueKey('c_page_$page'),
+                          page: page,
+                          imageBytes: snap.data!.bytes,
+                          imageSize: snap.data!.size,
+                          tool: _tool,
+                          color: _color,
+                          penWidth: _penWidth,
+                          fontSize: _fontSize,
+                          annotations: _allAnnotations[page] ?? const [],
+                          onChanged: (list) => setState(() => _allAnnotations[page] = list),
+                          onSelectionCaptured: _onSelectionCaptured,
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              );
+            },
+          );
+        }
+
+        return Column(
+          children: [
+            Expanded(
+              child: Center(
+                child: FutureBuilder<RenderedPage>(
+                  future: _renderPage(_currentPage, viewportWidth: viewportWidth),
+                  builder: (context, snap) {
+                    if (!snap.hasData) {
+                      return const CircularProgressIndicator();
+                    }
+                    return SingleChildScrollView(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: AnnotatablePageWidget(
+                          key: ValueKey('s_page_$_currentPage'),
+                          page: _currentPage,
+                          imageBytes: snap.data!.bytes,
+                          imageSize: snap.data!.size,
+                          tool: _tool,
+                          color: _color,
+                          penWidth: _penWidth,
+                          fontSize: _fontSize,
+                          annotations: _allAnnotations[_currentPage] ?? const [],
+                          onChanged: (list) => setState(() => _allAnnotations[_currentPage] = list),
+                          onSelectionCaptured: _onSelectionCaptured,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                onPressed: _currentPage > 1 ? () => setState(() => _currentPage--) : null,
-                icon: const Icon(Icons.chevron_left),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    onPressed: _currentPage > 1 ? () => setState(() => _currentPage--) : null,
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  Text('$_currentPage / ${doc.pagesCount}'),
+                  IconButton(
+                    onPressed: _currentPage < doc.pagesCount ? () => setState(() => _currentPage++) : null,
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ],
               ),
-              Text('$_currentPage / ${doc.pagesCount}'),
-              IconButton(
-                onPressed: _currentPage < doc.pagesCount ? () => setState(() => _currentPage++) : null,
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          ),
-        ),
-      ],
+            ),
+          ],
+        );
+      },
     );
   }
 

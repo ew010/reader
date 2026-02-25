@@ -5,6 +5,7 @@ import '../models/rendered_page.dart';
 
 class PdfService {
   final Map<String, RenderedPage> _renderCache = {};
+  final Map<int, double> _pageWidthCache = {};
 
   Future<RenderedPage> renderPage({
     required PdfDocument document,
@@ -33,5 +34,24 @@ class PdfService {
     return rendered;
   }
 
-  void clearCache() => _renderCache.clear();
+  Future<double> getPageWidth({
+    required PdfDocument document,
+    required int page,
+  }) async {
+    final cached = _pageWidthCache[page];
+    if (cached != null) return cached;
+
+    final pdfPage = await document.getPage(page);
+    final width = pdfPage.width;
+    await pdfPage.close();
+    _pageWidthCache[page] = width;
+    return width;
+  }
+
+  void clearRenderCache() => _renderCache.clear();
+
+  void clearDocumentCache() {
+    _renderCache.clear();
+    _pageWidthCache.clear();
+  }
 }
