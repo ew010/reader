@@ -96,15 +96,20 @@ jobs:
         run: flutter build ios --release --no-codesign
 
       - name: Pack iOS app artifact
+        id: pack_ios
         run: |
           cd build/ios/iphoneos
-          zip -r Runner.app.zip Runner.app
+          APP_NAME="$(find . -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          test -n "$APP_NAME"
+          ZIP_NAME="$(basename "$APP_NAME" .app).app.zip"
+          zip -r "$ZIP_NAME" "$APP_NAME"
+          echo "zip_path=build/ios/iphoneos/$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-runner-app
-          path: build/ios/iphoneos/Runner.app.zip
+          path: ${{ steps.pack_ios.outputs.zip_path }}
           if-no-files-found: error
 
   build-windows:
@@ -159,13 +164,18 @@ jobs:
         run: flutter build macos --release
 
       - name: Pack macOS app artifact
+        id: pack_macos
         run: |
           cd build/macos/Build/Products/Release
-          zip -r Runner.app.zip Runner.app
+          APP_NAME="$(find . -maxdepth 1 -type d -name '*.app' | head -n 1)"
+          test -n "$APP_NAME"
+          ZIP_NAME="$(basename "$APP_NAME" .app).app.zip"
+          zip -r "$ZIP_NAME" "$APP_NAME"
+          echo "zip_path=build/macos/Build/Products/Release/$ZIP_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-runner-app
-          path: build/macos/Build/Products/Release/Runner.app.zip
+          path: ${{ steps.pack_macos.outputs.zip_path }}
           if-no-files-found: error
