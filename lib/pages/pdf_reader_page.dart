@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -17,6 +18,52 @@ import '../widgets/mind_map_dialog.dart';
 import '../widgets/screenshot_panel.dart';
 
 enum ViewMode { both, pdfOnly, screenshotsOnly }
+
+class LibraryFolder {
+  LibraryFolder({
+    required this.id,
+    required this.name,
+    required this.files,
+    this.expanded = true,
+  });
+
+  final String id;
+  final String name;
+  final List<String> files;
+  final bool expanded;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'files': files,
+      'expanded': expanded,
+    };
+  }
+
+  static LibraryFolder fromJson(Map<String, dynamic> json) {
+    return LibraryFolder(
+      id: (json['id'] as String?) ?? 'folder_${DateTime.now().millisecondsSinceEpoch}',
+      name: (json['name'] as String?) ?? '未命名文件夹',
+      files: (json['files'] as List<dynamic>? ?? []).map((e) => e.toString()).toList(),
+      expanded: (json['expanded'] as bool?) ?? true,
+    );
+  }
+
+  LibraryFolder copyWith({
+    String? id,
+    String? name,
+    List<String>? files,
+    bool? expanded,
+  }) {
+    return LibraryFolder(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      files: files ?? this.files,
+      expanded: expanded ?? this.expanded,
+    );
+  }
+}
 
 class PdfReaderPage extends StatefulWidget {
   const PdfReaderPage({super.key});
@@ -49,6 +96,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
   final Map<int, List<AnnotationItem>> _allAnnotations = {};
   final List<ScreenshotItem> _screenshots = [];
+  List<LibraryFolder> _libraryFolders = [];
+  String? _selectedFolderId;
+  bool _libraryReady = false;
   final Map<String, MindMapNode> _mindMapNodes = {
     'root': const MindMapNode(
       id: 'root',
@@ -57,6 +107,12 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       offset: Offset(960, 80),
     ),
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _initLibrary();
+  }
 
   @override
   void dispose() {
@@ -75,7 +131,10 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       return;
     }
 
-    final path = result.files.single.path!;
+    await _openPdfPath(result.files.single.path!);
+  }
+
+  Future<void> _openPdfPath(String path) async {
     final doc = await PdfDocument.openFile(path);
     final paths = _storageService.buildPaths(path);
     await _storageService.ensureScreenshotDir(paths.screenshotDir);
@@ -108,6 +167,199 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     await _loadScreenshots();
     _syncMindMapFromScreenshots();
     if (mounted) setState(() {});
+  }
+
+  String get _libraryFilePath {
+    final home = Platform.environment['HOME'] ?? '.';
+    return p.join(home, '.reader_library.json');
+  }
+
+  Future<void> _initLibrary() async {
+    await _loadLibrary();
+    if (_libraryFolders.isEmpty) {
+      _libraryFolders = [
+        LibraryFolder(id: 'default', name: '默认文件夹', files: []),
+      ];
+      _selectedFolderId = 'default';
+      await _saveLibrary();
+    } else {
+      _selectedFolderId ??= _libraryFolders.first.id;
+    }
+    if (mounted) {
+      setState(() {
+        _libraryReady = true;
+      });
+    }
+  }
+
+  Future<void> _loadLibrary() async {
+    final file = File(_libraryFilePath);
+    if (!await file.exists()) {
+      _libraryFolders = [];
+      return;
+    }
+    try {
+      final raw = await file.readAsString();
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return;
+      final foldersRaw = decoded['folders'] as List<dynamic>? ?? [];
+      _libraryFolders = foldersRaw
+          .whereType<Map<String, dynamic>>()
+          .map(LibraryFolder.fromJson)
+          .toList();
+      _selectedFolderId = decoded['selectedFolderId'] as String?;
+    } catch (_) {
+      _libraryFolders = [];
+    }
+  }
+
+  Future<void> _saveLibrary() async {
+    final data = {
+      'selectedFolderId': _selectedFolderId,
+      'folders': _libraryFolders.map((f) => f.toJson()).toList(),
+    };
+    await File(_libraryFilePath).writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+  }
+
+  Future<void> _createFolder() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新建文件夹'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: '输入文件夹名称'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('创建'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    final folder = LibraryFolder(
+      id: 'folder_${DateTime.now().millisecondsSinceEpoch}',
+      name: name,
+      files: [],
+    );
+    setState(() {
+      _libraryFolders.add(folder);
+      _selectedFolderId = folder.id;
+    });
+    await _saveLibrary();
+  }
+
+  Future<void> _renameFolder(String folderId) async {
+    final index = _libraryFolders.indexWhere((f) => f.id == folderId);
+    if (index < 0) return;
+    final oldFolder = _libraryFolders[index];
+    final controller = TextEditingController(text: oldFolder.name);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('重命名文件夹'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(hintText: '输入新名称'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty) return;
+    setState(() {
+      _libraryFolders[index] = oldFolder.copyWith(name: newName);
+    });
+    await _saveLibrary();
+  }
+
+  Future<void> _deleteFolder(String folderId) async {
+    final index = _libraryFolders.indexWhere((f) => f.id == folderId);
+    if (index < 0) return;
+    final folder = _libraryFolders[index];
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除文件夹'),
+        content: Text('确认删除“${folder.name}”？文件条目会从列表中移除。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    setState(() {
+      _libraryFolders.removeAt(index);
+      if (_libraryFolders.isEmpty) {
+        final fallback = LibraryFolder(id: 'default', name: '默认文件夹', files: []);
+        _libraryFolders = [fallback];
+        _selectedFolderId = fallback.id;
+      } else if (_selectedFolderId == folderId) {
+        _selectedFolderId = _libraryFolders.first.id;
+      }
+    });
+    await _saveLibrary();
+  }
+
+  Future<void> _addFileToSelectedFolder() async {
+    final folderIndex = _libraryFolders.indexWhere((f) => f.id == _selectedFolderId);
+    if (folderIndex < 0) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      allowMultiple: true,
+    );
+    if (result == null) return;
+
+    final files = result.files.map((f) => f.path).whereType<String>().toList();
+    if (files.isEmpty) return;
+
+    final existing = _libraryFolders[folderIndex];
+    final merged = [...existing.files];
+    for (final file in files) {
+      if (!merged.contains(file)) merged.add(file);
+    }
+    setState(() {
+      _libraryFolders[folderIndex] = existing.copyWith(files: merged);
+    });
+    await _saveLibrary();
+  }
+
+  Future<void> _removeFileFromFolder(String folderId, String filePath) async {
+    final folderIndex = _libraryFolders.indexWhere((f) => f.id == folderId);
+    if (folderIndex < 0) return;
+    final folder = _libraryFolders[folderIndex];
+    final nextFiles = [...folder.files]..remove(filePath);
+    setState(() {
+      _libraryFolders[folderIndex] = folder.copyWith(files: nextFiles);
+    });
+    await _saveLibrary();
+  }
+
+  Future<void> _toggleFolderExpanded(String folderId) async {
+    final folderIndex = _libraryFolders.indexWhere((f) => f.id == folderId);
+    if (folderIndex < 0) return;
+    final folder = _libraryFolders[folderIndex];
+    setState(() {
+      _libraryFolders[folderIndex] = folder.copyWith(expanded: !folder.expanded);
+      _selectedFolderId = folderId;
+    });
+    await _saveLibrary();
   }
 
   Future<RenderedPage> _renderPage(int page, {required double viewportWidth}) async {
@@ -328,6 +580,50 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     );
   }
 
+  Future<void> _jumpToPage(PdfDocument doc) async {
+    final controller = TextEditingController(text: '$_currentPage');
+    final page = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('跳转到指定页'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            hintText: '请输入 1 - ${doc.pagesCount}',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final parsed = int.tryParse(controller.text.trim());
+              Navigator.pop(ctx, parsed);
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (page == null) return;
+
+    if (page < 1 || page > doc.pagesCount) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('页码超出范围：1 - ${doc.pagesCount}')),
+      );
+      return;
+    }
+
+    setState(() {
+      _continuousMode = false;
+      _currentPage = page;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final doc = _document;
@@ -340,9 +636,20 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         children: [
           _buildToolbar(),
           Expanded(
-            child: doc == null
-                ? const Center(child: Text('点击“打开PDF”开始'))
-                : _buildReaderContent(doc),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 300,
+                  child: _buildLibraryPanel(),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: doc == null
+                      ? const Center(child: Text('点击“打开PDF”开始'))
+                      : _buildReaderContent(doc),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -475,6 +782,126 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     }
   }
 
+  Widget _buildLibraryPanel() {
+    if (!_libraryReady) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  '文件列表',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+              IconButton(
+                tooltip: '新建文件夹',
+                onPressed: _createFolder,
+                icon: const Icon(Icons.create_new_folder_outlined),
+              ),
+              IconButton(
+                tooltip: '添加PDF',
+                onPressed: _addFileToSelectedFolder,
+                icon: const Icon(Icons.note_add_outlined),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: ListView.builder(
+            itemCount: _libraryFolders.length,
+            itemBuilder: (context, index) {
+              final folder = _libraryFolders[index];
+              final isSelected = folder.id == _selectedFolderId;
+              final header = ListTile(
+                dense: true,
+                selected: isSelected,
+                leading: Icon(folder.expanded ? Icons.folder_open : Icons.folder),
+                title: Text(folder.name),
+                subtitle: Text('${folder.files.length} 个文件'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    PopupMenuButton<String>(
+                      tooltip: '文件夹操作',
+                      onSelected: (value) {
+                        if (value == 'rename') {
+                          _renameFolder(folder.id);
+                        } else if (value == 'delete') {
+                          _deleteFolder(folder.id);
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(value: 'rename', child: Text('重命名')),
+                        PopupMenuItem(value: 'delete', child: Text('删除')),
+                      ],
+                      child: const Padding(
+                        padding: EdgeInsets.all(4),
+                        child: Icon(Icons.more_vert, size: 18),
+                      ),
+                    ),
+                    Icon(folder.expanded ? Icons.expand_less : Icons.expand_more),
+                  ],
+                ),
+                onTap: () => _toggleFolderExpanded(folder.id),
+              );
+              if (!folder.expanded) return header;
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  header,
+                  ...folder.files.map(
+                    (filePath) => Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.picture_as_pdf_outlined, size: 18),
+                        title: Text(
+                          p.basename(filePath),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          filePath,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          setState(() => _selectedFolderId = folder.id);
+                          if (!await File(filePath).exists()) {
+                            if (!mounted) return;
+                            messenger.showSnackBar(
+                              SnackBar(content: Text('文件不存在: $filePath')),
+                            );
+                            return;
+                          }
+                          await _openPdfPath(filePath);
+                        },
+                        trailing: IconButton(
+                          tooltip: '移除',
+                          onPressed: () => _removeFileFromFolder(folder.id, filePath),
+                          icon: const Icon(Icons.close, size: 16),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPdfArea(PdfDocument doc) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -565,6 +992,11 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                   IconButton(
                     onPressed: _currentPage < doc.pagesCount ? () => setState(() => _currentPage++) : null,
                     icon: const Icon(Icons.chevron_right),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    onPressed: () => _jumpToPage(doc),
+                    child: const Text('跳转'),
                   ),
                 ],
               ),
