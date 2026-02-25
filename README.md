@@ -43,6 +43,7 @@ flutter run -d macos
 触发方式：
 
 - push 到 `main`/`master`
+- push `v*` tag（如 `v1.0.0`）会额外发布 GitHub Release
 - Pull Request
 - 手动 `workflow_dispatch`
 
@@ -53,6 +54,8 @@ flutter run -d macos
 - Android 构建（`apk` + `aab`）
 - iOS 构建（`--no-codesign`，产物为 `Runner.app.zip`）
 - Windows 构建（Release 目录）
+- macOS 构建（产物为 `.app.zip`）
+- 当 tag 为 `v*` 时，自动创建 GitHub Release 并上传上述产物
 
 ## 数据文件
 
