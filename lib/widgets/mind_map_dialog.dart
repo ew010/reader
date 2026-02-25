@@ -27,6 +27,8 @@ class MindMapDialog extends StatefulWidget {
 
 class _MindMapDialogState extends State<MindMapDialog> {
   late final Map<String, MindMapNode> _localNodes = Map<String, MindMapNode>.from(widget.nodes);
+  static const double _canvasWidth = 3000;
+  static const double _canvasHeight = 2200;
 
   void _moveNode(String nodeId, Offset newOffset) {
     final node = _localNodes[nodeId];
@@ -198,6 +200,143 @@ class _MindMapDialogState extends State<MindMapDialog> {
     return Rect.fromLTWH(node.offset.dx, node.offset.dy, width, height);
   }
 
+  Size _nodeSize(MindMapNode node) {
+    final rect = _nodeRect(node);
+    return Size(rect.width, rect.height);
+  }
+
+  void _autoArrangeNodes() {
+    if (_localNodes.isEmpty) return;
+
+    final rootEntry = _localNodes.entries.firstWhere(
+      (entry) => entry.value.parentId == null,
+      orElse: () => _localNodes.entries.first,
+    );
+    final rootId = rootEntry.key;
+
+    final childrenByParent = <String, List<String>>{};
+    for (final node in _localNodes.values) {
+      final parentId = node.parentId;
+      if (parentId == null || !_localNodes.containsKey(parentId)) continue;
+      childrenByParent.putIfAbsent(parentId, () => <String>[]).add(node.id);
+    }
+    for (final entry in childrenByParent.entries) {
+      entry.value.sort((a, b) {
+        final na = _localNodes[a]!;
+        final nb = _localNodes[b]!;
+        final dy = na.offset.dy.compareTo(nb.offset.dy);
+        if (dy != 0) return dy;
+        return na.title.compareTo(nb.title);
+      });
+    }
+
+    final subtreeHeights = <String, double>{};
+    final measuring = <String>{};
+    const verticalGap = 36.0;
+    const horizontalGap = 300.0;
+
+    double measureHeight(String nodeId) {
+      final node = _localNodes[nodeId];
+      if (node == null) return 120;
+      final cached = subtreeHeights[nodeId];
+      if (cached != null) return cached;
+      if (measuring.contains(nodeId)) {
+        // Cycle guard: fall back to node height.
+        return _nodeSize(node).height;
+      }
+      measuring.add(nodeId);
+      final ownHeight = _nodeSize(node).height;
+      final children = childrenByParent[nodeId] ?? const <String>[];
+      final result = children.isEmpty
+          ? ownHeight
+          : math.max(
+              ownHeight,
+              children
+                      .map(measureHeight)
+                      .reduce((a, b) => a + b) +
+                  verticalGap * (children.length - 1),
+            );
+      measuring.remove(nodeId);
+      subtreeHeights[nodeId] = result;
+      return result;
+    }
+
+    final arrangedOffsets = <String, Offset>{};
+    final placing = <String>{};
+
+    double placeNode(String nodeId, int depth, double top) {
+      final node = _localNodes[nodeId];
+      if (node == null) return top;
+      if (placing.contains(nodeId)) {
+        final current = arrangedOffsets[nodeId] ?? node.offset;
+        return current.dy + _nodeSize(node).height / 2;
+      }
+      placing.add(nodeId);
+      final children = childrenByParent[nodeId] ?? const <String>[];
+      final ownSize = _nodeSize(node);
+      final subtreeHeight = subtreeHeights[nodeId] ?? measureHeight(nodeId);
+      final x = (120 + depth * horizontalGap).clamp(
+        24.0,
+        _canvasWidth - ownSize.width - 24,
+      );
+
+      double centerY;
+      if (children.isEmpty) {
+        centerY = top + ownSize.height / 2;
+      } else {
+        final childrenTotalHeight = children
+                .map((id) => subtreeHeights[id] ?? measureHeight(id))
+                .reduce((a, b) => a + b) +
+            verticalGap * (children.length - 1);
+        var childTop = top + (subtreeHeight - childrenTotalHeight) / 2;
+        var firstCenter = 0.0;
+        var lastCenter = 0.0;
+        for (var i = 0; i < children.length; i++) {
+          final childId = children[i];
+          final childCenter = placeNode(childId, depth + 1, childTop);
+          if (i == 0) firstCenter = childCenter;
+          if (i == children.length - 1) lastCenter = childCenter;
+          childTop += (subtreeHeights[childId] ?? 0) + verticalGap;
+        }
+        centerY = (firstCenter + lastCenter) / 2;
+      }
+
+      final y = (centerY - ownSize.height / 2).clamp(
+        24.0,
+        _canvasHeight - ownSize.height - 24,
+      );
+      arrangedOffsets[nodeId] = Offset(x, y);
+      placing.remove(nodeId);
+      return y + ownSize.height / 2;
+    }
+
+    measureHeight(rootId);
+    placeNode(rootId, 0, 100);
+
+    // Unreachable nodes fallback: place in a secondary column.
+    final remaining = _localNodes.keys.where((id) => !arrangedOffsets.containsKey(id)).toList();
+    var fallbackTop = 120.0;
+    for (final id in remaining) {
+      final node = _localNodes[id];
+      if (node == null) continue;
+      final size = _nodeSize(node);
+      arrangedOffsets[id] = Offset(
+        (_canvasWidth * 0.65).clamp(24.0, _canvasWidth - size.width - 24),
+        fallbackTop.clamp(24.0, _canvasHeight - size.height - 24),
+      );
+      fallbackTop += size.height + verticalGap;
+    }
+
+    setState(() {
+      arrangedOffsets.forEach((nodeId, offset) {
+        final node = _localNodes[nodeId];
+        if (node == null) return;
+        _localNodes[nodeId] = node.copyWith(offset: offset);
+      });
+    });
+    arrangedOffsets.forEach(widget.onNodeMoved);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog.fullscreen(
@@ -211,6 +350,12 @@ class _MindMapDialogState extends State<MindMapDialog> {
                   const Expanded(
                     child: Text('思维导图（全屏）', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
                   ),
+                  FilledButton.icon(
+                    onPressed: _autoArrangeNodes,
+                    icon: const Icon(Icons.auto_fix_high),
+                    label: const Text('自动排列'),
+                  ),
+                  const SizedBox(width: 8),
                   IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
                 ],
               ),
@@ -222,8 +367,8 @@ class _MindMapDialogState extends State<MindMapDialog> {
                 maxScale: 3,
                 boundaryMargin: const EdgeInsets.all(double.infinity),
                 child: SizedBox(
-                  width: 3000,
-                  height: 2200,
+                  width: _canvasWidth,
+                  height: _canvasHeight,
                   child: Stack(
                     children: [
                       Positioned.fill(
