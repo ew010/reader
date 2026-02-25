@@ -13,7 +13,7 @@ class PdfReaderApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'PDF阅读器(Flutter)',
+      title: '阅读',
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blue),
       home: const PdfReaderPage(),
     );

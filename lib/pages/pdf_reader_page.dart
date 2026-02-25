@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 
 import '../models/annotation.dart';
@@ -102,6 +103,8 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   List<LibraryFolder> _libraryFolders = [];
   String? _selectedFolderId;
   bool _libraryReady = false;
+  String? _libraryFilePathCache;
+  String? _libraryDataDirPath;
   final Map<String, MindMapNode> _mindMapNodes = {
     'root': const MindMapNode(
       id: 'root',
@@ -131,6 +134,11 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       allowedExtensions: ['pdf'],
     );
     if (result == null || result.files.single.path == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法读取该 PDF 路径，请选择本地文件')),
+        );
+      }
       return;
     }
 
@@ -138,7 +146,26 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   }
 
   Future<void> _openPdfPath(String path) async {
-    final doc = await PdfDocument.openFile(path);
+    if (!await File(path).exists()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('文件不存在或不可访问: $path')),
+        );
+      }
+      return;
+    }
+
+    late final PdfDocument doc;
+    try {
+      doc = await PdfDocument.openFile(path);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开 PDF 失败: $e')),
+        );
+      }
+      return;
+    }
     final paths = _storageService.buildPaths(path);
     await _storageService.ensureScreenshotDir(paths.screenshotDir);
 
@@ -174,9 +201,26 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     if (mounted) setState(() {});
   }
 
-  String get _libraryFilePath {
-    final home = Platform.environment['HOME'] ?? '.';
-    return p.join(home, '.reader_library.json');
+  Future<String> _getLibraryFilePath() async {
+    if (_libraryFilePathCache != null) return _libraryFilePathCache!;
+
+    Directory baseDir;
+    if (Platform.isAndroid) {
+      final externalDocs = await getExternalStorageDirectories(type: StorageDirectory.documents);
+      if (externalDocs != null && externalDocs.isNotEmpty) {
+        baseDir = externalDocs.first;
+      } else {
+        baseDir = (await getExternalStorageDirectory()) ?? await getApplicationDocumentsDirectory();
+      }
+    } else {
+      baseDir = await getApplicationDocumentsDirectory();
+    }
+
+    final dataDir = Directory(p.join(baseDir.path, 'ReaderData'));
+    await dataDir.create(recursive: true);
+    _libraryDataDirPath = dataDir.path;
+    _libraryFilePathCache = p.join(dataDir.path, 'library.json');
+    return _libraryFilePathCache!;
   }
 
   Future<void> _initLibrary() async {
@@ -198,7 +242,8 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   }
 
   Future<void> _loadLibrary() async {
-    final file = File(_libraryFilePath);
+    final filePath = await _getLibraryFilePath();
+    final file = File(filePath);
     if (!await file.exists()) {
       _libraryFolders = [];
       return;
@@ -219,11 +264,12 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   }
 
   Future<void> _saveLibrary() async {
+    final filePath = await _getLibraryFilePath();
     final data = {
       'selectedFolderId': _selectedFolderId,
       'folders': _libraryFolders.map((f) => f.toJson()).toList(),
     };
-    await File(_libraryFilePath).writeAsString(const JsonEncoder.withIndent('  ').convert(data));
+    await File(filePath).writeAsString(const JsonEncoder.withIndent('  ').convert(data));
   }
 
   Future<void> _createFolder() async {
@@ -506,6 +552,20 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     }
   }
 
+  Future<void> _manualClearPickerTempFiles() async {
+    bool? cleared;
+    try {
+      cleared = await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {
+      cleared = null;
+    }
+    if (!mounted) return;
+    final text = (cleared == true)
+        ? '临时文件清理完成'
+        : '当前平台不支持或没有可清理的临时文件';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
   Future<void> _editScreenshotNote(ScreenshotItem item) async {
     final controller = TextEditingController(text: item.note);
     final ok = await showDialog<bool>(
@@ -679,7 +739,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_pdfPath == null ? 'PDF阅读器(Flutter)' : 'PDF阅读器 - ${p.basename(_pdfPath!)}'),
+        title: Text(_pdfPath == null ? '阅读' : '阅读 - ${p.basename(_pdfPath!)}'),
       ),
       body: Column(
         children: [
@@ -904,9 +964,24 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                 onPressed: _addFileToSelectedFolder,
                 icon: const Icon(Icons.note_add_outlined),
               ),
+              IconButton(
+                tooltip: '清理临时文件',
+                onPressed: _manualClearPickerTempFiles,
+                icon: const Icon(Icons.cleaning_services_outlined),
+              ),
             ],
           ),
         ),
+        if (_libraryDataDirPath != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+            child: Text(
+              '数据目录: $_libraryDataDirPath',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
         const Divider(height: 1),
         Expanded(
           child: ListView.builder(

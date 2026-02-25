@@ -9,15 +9,35 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  file_picker: ^8.1.2
+  file_picker: ^10.3.10
   pdfx: ^2.6.0
   path: ^1.9.0
   image: ^4.2.0
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "/Users/pc/Documents/trae_projects/reader/哆啦A梦看书.png"
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: "/Users/pc/Documents/trae_projects/reader/哆啦A梦看书.png"
+    background_color: "#ffffff"
+    theme_color: "#ffffff"
+  windows:
+    generate: true
+    image_path: "/Users/pc/Documents/trae_projects/reader/哆啦A梦看书.png"
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: "/Users/pc/Documents/trae_projects/reader/哆啦A梦看书.png"

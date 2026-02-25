@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "pdf_reader_flutter" "\0"
+            VALUE "CompanyName", "app.reader" "\0"
+            VALUE "FileDescription", "阅读" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "pdf_reader_flutter" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
-            VALUE "OriginalFilename", "pdf_reader_flutter.exe" "\0"
-            VALUE "ProductName", "pdf_reader_flutter" "\0"
+            VALUE "InternalName", "reader" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 app.reader. All rights reserved." "\0"
+            VALUE "OriginalFilename", "reader.exe" "\0"
+            VALUE "ProductName", "阅读" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
