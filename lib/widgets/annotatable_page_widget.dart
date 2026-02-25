@@ -14,6 +14,7 @@ class AnnotatablePageWidget extends StatefulWidget {
     required this.page,
     required this.imageBytes,
     required this.imageSize,
+    this.focusedRect,
     required this.tool,
     required this.color,
     required this.penWidth,
@@ -26,6 +27,7 @@ class AnnotatablePageWidget extends StatefulWidget {
   final int page;
   final Uint8List imageBytes;
   final Size imageSize;
+  final Rect? focusedRect;
   final ToolType tool;
   final Color color;
   final double penWidth;
@@ -236,6 +238,7 @@ class _AnnotatablePageWidgetState extends State<AnnotatablePageWidget> {
               CustomPaint(
                 painter: _AnnotationPainter(
                   annotations: widget.annotations,
+                  focusedRect: widget.focusedRect,
                   fromNormalized: _fromNormalized,
                   fromNormalizedRect: _fromNormalizedRect,
                 ),
@@ -260,11 +263,13 @@ class _AnnotatablePageWidgetState extends State<AnnotatablePageWidget> {
 class _AnnotationPainter extends CustomPainter {
   const _AnnotationPainter({
     required this.annotations,
+    required this.focusedRect,
     required this.fromNormalized,
     required this.fromNormalizedRect,
   });
 
   final List<AnnotationItem> annotations;
+  final Rect? focusedRect;
   final Offset Function(Offset) fromNormalized;
   final Rect Function(Rect) fromNormalizedRect;
 
@@ -310,11 +315,24 @@ class _AnnotationPainter extends CustomPainter {
           break;
       }
     }
+
+    if (focusedRect != null && focusedRect != Rect.zero) {
+      final rect = fromNormalizedRect(focusedRect!);
+      final fillPaint = Paint()
+        ..color = Colors.blue.withValues(alpha: 0.12)
+        ..style = PaintingStyle.fill;
+      final borderPaint = Paint()
+        ..color = Colors.blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawRect(rect, fillPaint);
+      canvas.drawRect(rect, borderPaint);
+    }
   }
 
   @override
   bool shouldRepaint(covariant _AnnotationPainter oldDelegate) {
-    return oldDelegate.annotations != annotations;
+    return oldDelegate.annotations != annotations || oldDelegate.focusedRect != focusedRect;
   }
 }
 

@@ -96,6 +96,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
   final Map<int, List<AnnotationItem>> _allAnnotations = {};
   final List<ScreenshotItem> _screenshots = [];
+  final Map<int, Rect> _focusedRectByPage = {};
   final Set<String> _hiddenMindMapShotNodeIds = {};
   List<LibraryFolder> _libraryFolders = [];
   String? _selectedFolderId;
@@ -144,6 +145,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     _pdfService.clearDocumentCache();
     _allAnnotations.clear();
     _screenshots.clear();
+    _focusedRectByPage.clear();
     _hiddenMindMapShotNodeIds.clear();
     _mindMapNodes
       ..clear()
@@ -426,6 +428,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     setState(() {
       _screenshots.add(ScreenshotItem(path: filePath, page: page, rect: rect));
       _screenshots.sort((a, b) => a.page.compareTo(b.page));
+      if (rect != Rect.zero) {
+        _focusedRectByPage[page] = rect;
+      }
     });
     _syncMindMapFromScreenshots();
 
@@ -804,6 +809,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         onTap: (shot) => setState(() {
           _continuousMode = false;
           _currentPage = shot.page;
+          if (shot.rect != Rect.zero) {
+            _focusedRectByPage[shot.page] = shot.rect;
+          }
         }),
         onEditNote: _editScreenshotNote,
         onDelete: _deleteScreenshot,
@@ -973,6 +981,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                           page: page,
                           imageBytes: snap.data!.bytes,
                           imageSize: snap.data!.size,
+                          focusedRect: _focusedRectByPage[page],
                           tool: _tool,
                           color: _color,
                           penWidth: _penWidth,
@@ -1008,6 +1017,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                           page: _currentPage,
                           imageBytes: snap.data!.bytes,
                           imageSize: snap.data!.size,
+                          focusedRect: _focusedRectByPage[_currentPage],
                           tool: _tool,
                           color: _color,
                           penWidth: _penWidth,

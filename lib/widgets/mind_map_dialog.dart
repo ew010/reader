@@ -105,16 +105,67 @@ class _MindMapDialogState extends State<MindMapDialog> {
     widget.onNodeDeleted(nodeId);
   }
 
+  Future<void> _changeParent(String nodeId) async {
+    final node = _localNodes[nodeId];
+    if (node == null || node.parentId == null) return;
+
+    final candidates = _localNodes.values
+        .where((n) => n.id != nodeId && !_isDescendant(potentialDescendantId: n.id, ancestorId: nodeId))
+        .toList();
+
+    String selectedParentId = node.parentId ?? 'root';
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('修改父节点'),
+          content: SizedBox(
+            width: 360,
+            child: DropdownButtonFormField<String>(
+              initialValue: selectedParentId,
+              items: [
+                const DropdownMenuItem(value: 'root', child: Text('根节点')),
+                ...candidates.map(
+                  (n) => DropdownMenuItem(
+                    value: n.id,
+                    child: Text(n.title, overflow: TextOverflow.ellipsis),
+                  ),
+                ),
+              ],
+              onChanged: (v) {
+                if (v == null) return;
+                setDialogState(() => selectedParentId = v);
+              },
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, selectedParentId),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null || result == node.parentId) return;
+
+    setState(() {
+      _localNodes[nodeId] = node.copyWith(parentId: result);
+    });
+    widget.onNodeReparented(nodeId, result);
+  }
+
   void _reparentByDrop(String nodeId) {
     final node = _localNodes[nodeId];
     if (node == null || node.parentId == null) return;
 
-    final nodeCenter = _nodeRect(node).center;
+    final movingRect = _nodeRect(node);
     String? targetParentId;
     for (final candidate in _localNodes.values) {
       if (candidate.id == nodeId) continue;
       if (_isDescendant(potentialDescendantId: candidate.id, ancestorId: nodeId)) continue;
-      if (_nodeRect(candidate).inflate(20).contains(nodeCenter)) {
+      if (movingRect.overlaps(_nodeRect(candidate).inflate(24))) {
         targetParentId = candidate.id;
         break;
       }
@@ -179,6 +230,7 @@ class _MindMapDialogState extends State<MindMapDialog> {
                             onMoveEnd: () => _reparentByDrop(node.id),
                             onRename: () => _renameNode(node.id),
                             onDelete: () => _deleteNode(node.id),
+                            onChangeParent: () => _changeParent(node.id),
                           ),
                         ),
                       ),
@@ -201,6 +253,7 @@ class _MindMapNodeCard extends StatelessWidget {
     required this.onMoveEnd,
     required this.onRename,
     required this.onDelete,
+    required this.onChangeParent,
   });
 
   final MindMapNode node;
@@ -208,6 +261,7 @@ class _MindMapNodeCard extends StatelessWidget {
   final VoidCallback onMoveEnd;
   final VoidCallback onRename;
   final VoidCallback onDelete;
+  final VoidCallback onChangeParent;
 
   @override
   Widget build(BuildContext context) {
@@ -251,10 +305,12 @@ class _MindMapNodeCard extends StatelessWidget {
                   onSelected: (value) {
                     if (value == 'rename') onRename();
                     if (value == 'delete') onDelete();
+                    if (value == 'parent') onChangeParent();
                   },
                   itemBuilder: (context) {
                     final items = <PopupMenuEntry<String>>[
                       const PopupMenuItem(value: 'rename', child: Text('重命名')),
+                      if (!isRoot) const PopupMenuItem(value: 'parent', child: Text('修改父节点')),
                     ];
                     if (!isRoot) {
                       items.add(const PopupMenuItem(value: 'delete', child: Text('删除')));
@@ -308,13 +364,7 @@ class _MindMapLinkPainter extends CustomPainter {
 
       final p1 = parent.offset + const Offset(90, 40);
       final p2 = node.offset + const Offset(75, 35);
-      final cp1 = Offset((p1.dx + p2.dx) / 2, p1.dy);
-      final cp2 = Offset((p1.dx + p2.dx) / 2, p2.dy);
-
-      final path = Path()
-        ..moveTo(p1.dx, p1.dy)
-        ..cubicTo(cp1.dx, cp1.dy, cp2.dx, cp2.dy, p2.dx, p2.dy);
-      canvas.drawPath(path, paint);
+      canvas.drawLine(p1, p2, paint);
     }
   }
 
