@@ -83,6 +83,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   bool _autoFitWidth = true;
   bool _continuousMode = false;
   bool _onlyCurrentPageScreenshots = false;
+  double _bothSplitRatio = 0.72;
   ViewMode _viewMode = ViewMode.both;
 
   ToolType _tool = ToolType.select;
@@ -806,37 +807,73 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   }
 
   Widget _buildReaderContent(PdfDocument doc) {
-    final screenshotPanel = SizedBox(
-      width: 340,
-      child: ScreenshotPanel(
-        screenshots: _visibleScreenshots,
-        onlyCurrentPage: _onlyCurrentPageScreenshots,
-        onOnlyCurrentPageChanged: (v) => setState(() => _onlyCurrentPageScreenshots = v),
-        onOpenMindMap: _openMindMapDialog,
-        onTap: (shot) => setState(() {
-          _continuousMode = false;
-          _currentPage = shot.page;
-          if (shot.rect != Rect.zero) {
-            _focusedRectByPage[shot.page] = shot.rect;
-          }
-        }),
-        onEditNote: _editScreenshotNote,
-        onDelete: _deleteScreenshot,
-      ),
+    final screenshotPanel = ScreenshotPanel(
+      screenshots: _visibleScreenshots,
+      onlyCurrentPage: _onlyCurrentPageScreenshots,
+      onOnlyCurrentPageChanged: (v) => setState(() => _onlyCurrentPageScreenshots = v),
+      onOpenMindMap: _openMindMapDialog,
+      onTap: (shot) => setState(() {
+        _continuousMode = false;
+        _currentPage = shot.page;
+        if (shot.rect != Rect.zero) {
+          _focusedRectByPage[shot.page] = shot.rect;
+        }
+      }),
+      onEditNote: _editScreenshotNote,
+      onDelete: _deleteScreenshot,
     );
 
     switch (_viewMode) {
       case ViewMode.both:
-        return Row(
-          children: [
-            Expanded(child: _buildPdfArea(doc)),
-            screenshotPanel,
-          ],
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            const dividerWidth = 10.0;
+            const minPdfWidth = 320.0;
+            const minShotWidth = 280.0;
+            final total = constraints.maxWidth;
+            final usable = (total - dividerWidth).clamp(0.0, double.infinity);
+
+            final minRatio = usable <= 0 ? 0.0 : (minPdfWidth / usable).clamp(0.0, 1.0);
+            final maxRatio = usable <= 0 ? 1.0 : (1 - (minShotWidth / usable)).clamp(0.0, 1.0);
+            final ratio = _bothSplitRatio.clamp(minRatio, maxRatio);
+            final leftWidth = usable * ratio;
+            final rightWidth = usable - leftWidth;
+
+            return Row(
+              children: [
+                SizedBox(width: leftWidth, child: _buildPdfArea(doc)),
+                MouseRegion(
+                  cursor: SystemMouseCursors.resizeLeftRight,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragUpdate: (details) {
+                      if (usable <= 0) return;
+                      setState(() {
+                        _bothSplitRatio = (_bothSplitRatio + details.delta.dx / usable).clamp(minRatio, maxRatio);
+                      });
+                    },
+                    child: Container(
+                      width: dividerWidth,
+                      color: Colors.transparent,
+                      child: Center(
+                        child: Container(
+                          width: 2,
+                          height: 36,
+                          color: Colors.grey.shade400,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: rightWidth, child: screenshotPanel),
+              ],
+            );
+          },
         );
       case ViewMode.pdfOnly:
         return _buildPdfArea(doc);
       case ViewMode.screenshotsOnly:
-        return screenshotPanel;
+        return SizedBox.expand(child: screenshotPanel);
     }
   }
 
@@ -877,37 +914,52 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
             itemBuilder: (context, index) {
               final folder = _libraryFolders[index];
               final isSelected = folder.id == _selectedFolderId;
-              final header = ListTile(
-                dense: true,
-                selected: isSelected,
-                leading: Icon(folder.expanded ? Icons.folder_open : Icons.folder),
-                title: Text(folder.name),
-                subtitle: Text('${folder.files.length} 个文件'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PopupMenuButton<String>(
-                      tooltip: '文件夹操作',
-                      onSelected: (value) {
-                        if (value == 'rename') {
-                          _renameFolder(folder.id);
-                        } else if (value == 'delete') {
-                          _deleteFolder(folder.id);
-                        }
-                      },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(value: 'rename', child: Text('重命名')),
-                        PopupMenuItem(value: 'delete', child: Text('删除')),
+              final header = Material(
+                color: isSelected ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.08) : Colors.transparent,
+                child: InkWell(
+                  onTap: () => _toggleFolderExpanded(folder.id),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    child: Row(
+                      children: [
+                        Icon(folder.expanded ? Icons.folder_open : Icons.folder),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                folder.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                '${folder.files.length} 个文件',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        PopupMenuButton<String>(
+                          tooltip: '文件夹操作',
+                          onSelected: (value) {
+                            if (value == 'rename') {
+                              _renameFolder(folder.id);
+                            } else if (value == 'delete') {
+                              _deleteFolder(folder.id);
+                            }
+                          },
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(value: 'rename', child: Text('重命名')),
+                            PopupMenuItem(value: 'delete', child: Text('删除')),
+                          ],
+                          icon: const Icon(Icons.more_vert, size: 18),
+                        ),
+                        Icon(folder.expanded ? Icons.expand_less : Icons.expand_more),
                       ],
-                      child: const Padding(
-                        padding: EdgeInsets.all(4),
-                        child: Icon(Icons.more_vert, size: 18),
-                      ),
                     ),
-                    Icon(folder.expanded ? Icons.expand_less : Icons.expand_more),
-                  ],
+                  ),
                 ),
-                onTap: () => _toggleFolderExpanded(folder.id),
               );
               if (!folder.expanded) return header;
 

@@ -200,18 +200,17 @@ class _MindMapDialogState extends State<MindMapDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.all(24),
-      child: SizedBox(
-        width: 1100,
-        height: 700,
+    return Dialog.fullscreen(
+      child: SafeArea(
         child: Column(
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
               child: Row(
                 children: [
-                  const Expanded(child: Text('思维导图', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+                  const Expanded(
+                    child: Text('思维导图（全屏）', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600)),
+                  ),
                   IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
                 ],
               ),
@@ -223,8 +222,8 @@ class _MindMapDialogState extends State<MindMapDialog> {
                 maxScale: 3,
                 boundaryMargin: const EdgeInsets.all(double.infinity),
                 child: SizedBox(
-                  width: 2200,
-                  height: 1600,
+                  width: 3000,
+                  height: 2200,
                   child: Stack(
                     children: [
                       Positioned.fill(
