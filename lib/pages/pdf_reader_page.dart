@@ -105,6 +105,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   bool _libraryReady = false;
   String? _libraryFilePathCache;
   String? _libraryDataDirPath;
+  final ValueNotifier<int> _libraryUiRefreshTick = ValueNotifier<int>(0);
   final Map<String, MindMapNode> _mindMapNodes = {
     'root': const MindMapNode(
       id: 'root',
@@ -124,8 +125,13 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   void dispose() {
     _saveAnnotations();
     _saveScreenshotNotes();
+    _libraryUiRefreshTick.dispose();
     _document?.close();
     super.dispose();
+  }
+
+  void _notifyLibraryDialogRefresh() {
+    _libraryUiRefreshTick.value = _libraryUiRefreshTick.value + 1;
   }
 
   Future<void> _openPdf() async {
@@ -301,6 +307,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       _libraryFolders.add(folder);
       _selectedFolderId = folder.id;
     });
+    _notifyLibraryDialogRefresh();
     await _saveLibrary();
   }
 
@@ -330,6 +337,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     setState(() {
       _libraryFolders[index] = oldFolder.copyWith(name: newName);
     });
+    _notifyLibraryDialogRefresh();
     await _saveLibrary();
   }
 
@@ -363,6 +371,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         _selectedFolderId = _libraryFolders.first.id;
       }
     });
+    _notifyLibraryDialogRefresh();
     await _saveLibrary();
   }
 
@@ -388,6 +397,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     setState(() {
       _libraryFolders[folderIndex] = existing.copyWith(files: merged);
     });
+    _notifyLibraryDialogRefresh();
     await _saveLibrary();
   }
 
@@ -399,6 +409,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     setState(() {
       _libraryFolders[folderIndex] = folder.copyWith(files: nextFiles);
     });
+    _notifyLibraryDialogRefresh();
     await _saveLibrary();
   }
 
@@ -410,6 +421,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       _libraryFolders[folderIndex] = folder.copyWith(expanded: !folder.expanded);
       _selectedFolderId = folderId;
     });
+    _notifyLibraryDialogRefresh();
     await _saveLibrary();
   }
 
@@ -860,7 +872,10 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         child: SizedBox(
           width: 420,
           height: 680,
-          child: _buildLibraryPanel(),
+          child: ValueListenableBuilder<int>(
+            valueListenable: _libraryUiRefreshTick,
+            builder: (context, _, __) => _buildLibraryPanel(),
+          ),
         ),
       ),
     );
@@ -1061,6 +1076,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                         onTap: () async {
                           final messenger = ScaffoldMessenger.of(context);
                           setState(() => _selectedFolderId = folder.id);
+                          _notifyLibraryDialogRefresh();
                           if (!await File(filePath).exists()) {
                             if (!mounted) return;
                             messenger.showSnackBar(
