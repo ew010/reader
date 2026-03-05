@@ -1170,6 +1170,10 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                         ),
                         onTap: () async {
                           final messenger = ScaffoldMessenger.of(context);
+                          final navigator = Navigator.of(
+                            context,
+                            rootNavigator: true,
+                          );
                           setState(() => _selectedFolderId = folder.id);
                           _notifyLibraryDialogRefresh();
                           if (!await File(filePath).exists()) {
@@ -1180,7 +1184,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                             return;
                           }
                           if (mounted) {
-                            Navigator.of(context, rootNavigator: true).pop();
+                            navigator.pop();
                           }
                           await _openPdfPath(filePath);
                         },
