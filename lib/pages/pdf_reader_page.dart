@@ -1109,6 +1109,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                             );
                             return;
                           }
+                          if (mounted) {
+                            Navigator.of(context, rootNavigator: true).pop();
+                          }
                           await _openPdfPath(filePath);
                         },
                         trailing: IconButton(
