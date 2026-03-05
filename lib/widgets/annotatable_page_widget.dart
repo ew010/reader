@@ -1,10 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:image/image.dart' as img;
 
 import '../models/annotation.dart';
 
@@ -34,15 +31,13 @@ class AnnotatablePageWidget extends StatefulWidget {
   final double fontSize;
   final List<AnnotationItem> annotations;
   final ValueChanged<List<AnnotationItem>> onChanged;
-  final Future<void> Function({required int page, required Rect rect, required Uint8List pngBytes}) onSelectionCaptured;
+  final Future<void> Function({required int page, required Rect rect}) onSelectionCaptured;
 
   @override
   State<AnnotatablePageWidget> createState() => _AnnotatablePageWidgetState();
 }
 
 class _AnnotatablePageWidgetState extends State<AnnotatablePageWidget> {
-  final GlobalKey _boundaryKey = GlobalKey();
-
   Rect? _draftRect;
   List<Offset> _draftPath = [];
   Offset? _start;
@@ -120,10 +115,7 @@ class _AnnotatablePageWidgetState extends State<AnnotatablePageWidget> {
           list.add(AnnotationItem.highlight(color: widget.color, rect: normalized));
         }
         widget.onChanged(list);
-        final png = await _captureSelection(rect);
-        if (png != null) {
-          await widget.onSelectionCaptured(page: widget.page, rect: normalized, pngBytes: png);
-        }
+        await widget.onSelectionCaptured(page: widget.page, rect: normalized);
       }
     }
 
@@ -132,30 +124,6 @@ class _AnnotatablePageWidgetState extends State<AnnotatablePageWidget> {
       _draftRect = null;
       _draftPath = [];
     });
-  }
-
-  Future<Uint8List?> _captureSelection(Rect rect) async {
-    final context = _boundaryKey.currentContext;
-    if (context == null) return null;
-
-    final boundary = context.findRenderObject() as RenderRepaintBoundary?;
-    if (boundary == null) return null;
-
-    final ratio = ui.PlatformDispatcher.instance.views.first.devicePixelRatio;
-    final image = await boundary.toImage(pixelRatio: ratio);
-    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    if (bytes == null) return null;
-
-    final decoded = img.decodePng(bytes.buffer.asUint8List());
-    if (decoded == null) return null;
-
-    final x = (rect.left * ratio).round().clamp(0, decoded.width - 1);
-    final y = (rect.top * ratio).round().clamp(0, decoded.height - 1);
-    final w = (rect.width * ratio).round().clamp(1, decoded.width - x);
-    final h = (rect.height * ratio).round().clamp(1, decoded.height - y);
-
-    final cropped = img.copyCrop(decoded, x: x, y: y, width: w, height: h);
-    return Uint8List.fromList(img.encodePng(cropped));
   }
 
   Offset _toNormalized(Offset p) {
@@ -222,38 +190,35 @@ class _AnnotatablePageWidgetState extends State<AnnotatablePageWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      key: _boundaryKey,
-      child: SizedBox(
-        width: widget.imageSize.width,
-        height: widget.imageSize.height,
-        child: GestureDetector(
-          onPanStart: _handlePanStart,
-          onPanUpdate: _handlePanUpdate,
-          onPanEnd: _handlePanEnd,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.memory(widget.imageBytes, fit: BoxFit.fill),
-              CustomPaint(
-                painter: _AnnotationPainter(
-                  annotations: widget.annotations,
-                  focusedRect: widget.focusedRect,
-                  fromNormalized: _fromNormalized,
-                  fromNormalizedRect: _fromNormalizedRect,
-                ),
+    return SizedBox(
+      width: widget.imageSize.width,
+      height: widget.imageSize.height,
+      child: GestureDetector(
+        onPanStart: _handlePanStart,
+        onPanUpdate: _handlePanUpdate,
+        onPanEnd: _handlePanEnd,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(widget.imageBytes, fit: BoxFit.fill),
+            CustomPaint(
+              painter: _AnnotationPainter(
+                annotations: widget.annotations,
+                focusedRect: widget.focusedRect,
+                fromNormalized: _fromNormalized,
+                fromNormalizedRect: _fromNormalizedRect,
               ),
-              CustomPaint(
-                painter: _DraftPainter(
-                  rect: _draftRect,
-                  path: _draftPath,
-                  tool: widget.tool,
-                  color: widget.color,
-                  width: widget.penWidth,
-                ),
+            ),
+            CustomPaint(
+              painter: _DraftPainter(
+                rect: _draftRect,
+                path: _draftPath,
+                tool: widget.tool,
+                color: widget.color,
+                width: widget.penWidth,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

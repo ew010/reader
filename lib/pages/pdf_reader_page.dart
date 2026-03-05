@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
@@ -21,6 +22,7 @@ import '../widgets/mind_map_dialog.dart';
 import '../widgets/screenshot_panel.dart';
 
 enum ViewMode { both, pdfOnly, screenshotsOnly }
+const double _screenshotRenderTargetWidth = 2400;
 
 class LibraryFolder {
   LibraryFolder({
@@ -480,10 +482,10 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   Future<void> _onSelectionCaptured({
     required int page,
     required Rect rect,
-    required Uint8List pngBytes,
   }) async {
     final dir = _screenshotDir;
-    if (dir == null) return;
+    final pngBytes = await _captureSelectionPng(page: page, rect: rect);
+    if (dir == null || pngBytes == null) return;
 
     final ts = DateTime.now().millisecondsSinceEpoch;
     final fileName = 'screenshot_${page}_$ts.png';
@@ -505,6 +507,27 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         SnackBar(content: Text('截图已保存: $filePath')),
       );
     }
+  }
+
+  Future<Uint8List?> _captureSelectionPng({
+    required int page,
+    required Rect rect,
+  }) async {
+    final doc = _document;
+    if (doc == null) return null;
+
+    final pageWidth = await _pdfService.getPageWidth(document: doc, page: page);
+    final captureZoom = (_screenshotRenderTargetWidth / pageWidth).clamp(0.5, 5.0);
+    final rendered = await _pdfService.renderPage(document: doc, page: page, zoom: captureZoom);
+    final decoded = img.decodePng(rendered.bytes);
+    if (decoded == null) return null;
+
+    final x = (rect.left * decoded.width).round().clamp(0, decoded.width - 1);
+    final y = (rect.top * decoded.height).round().clamp(0, decoded.height - 1);
+    final w = (rect.width * decoded.width).round().clamp(1, decoded.width - x);
+    final h = (rect.height * decoded.height).round().clamp(1, decoded.height - y);
+    final cropped = img.copyCrop(decoded, x: x, y: y, width: w, height: h);
+    return Uint8List.fromList(img.encodePng(cropped));
   }
 
   Future<Uint8List> _appendPageLabelToPng({
