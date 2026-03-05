@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -487,7 +488,8 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     final ts = DateTime.now().millisecondsSinceEpoch;
     final fileName = 'screenshot_${page}_$ts.png';
     final filePath = p.join(dir, fileName);
-    await File(filePath).writeAsBytes(pngBytes, flush: true);
+    final labeledBytes = await _appendPageLabelToPng(pngBytes: pngBytes, page: page);
+    await File(filePath).writeAsBytes(labeledBytes, flush: true);
 
     setState(() {
       _screenshots.add(ScreenshotItem(path: filePath, page: page, rect: rect));
@@ -502,6 +504,74 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('截图已保存: $filePath')),
       );
+    }
+  }
+
+  Future<Uint8List> _appendPageLabelToPng({
+    required Uint8List pngBytes,
+    required int page,
+  }) async {
+    try {
+      final codec = await ui.instantiateImageCodec(pngBytes);
+      final frame = await codec.getNextFrame();
+      final src = frame.image;
+      const footerHeight = 34.0;
+      final width = src.width.toDouble();
+      final height = src.height.toDouble();
+      final outHeight = height + footerHeight;
+
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(
+        recorder,
+        Rect.fromLTWH(0, 0, width, outHeight),
+      );
+
+      final bg = Paint()..color = Colors.white;
+      canvas.drawRect(Rect.fromLTWH(0, 0, width, outHeight), bg);
+      paintImage(
+        canvas: canvas,
+        rect: Rect.fromLTWH(0, 0, width, height),
+        image: src,
+        fit: BoxFit.fill,
+      );
+
+      final text = 'p$page';
+      final tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      const badgePaddingX = 8.0;
+      const badgePaddingY = 3.0;
+      const rightGap = 8.0;
+      final badgeW = tp.width + badgePaddingX * 2;
+      final badgeH = tp.height + badgePaddingY * 2;
+      final badgeX = width - badgeW - rightGap;
+      final badgeY = height + (footerHeight - badgeH) / 2;
+
+      final badgePaint = Paint()..color = Colors.black87;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(badgeX, badgeY, badgeW, badgeH),
+          const Radius.circular(10),
+        ),
+        badgePaint,
+      );
+      tp.paint(canvas, Offset(badgeX + badgePaddingX, badgeY + badgePaddingY));
+
+      final outImage = await recorder.endRecording().toImage(src.width, outHeight.toInt());
+      final bytes = await outImage.toByteData(format: ui.ImageByteFormat.png);
+      if (bytes == null) return pngBytes;
+      return bytes.buffer.asUint8List();
+    } catch (_) {
+      return pngBytes;
     }
   }
 
