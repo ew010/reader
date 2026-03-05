@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -105,6 +106,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
   bool _libraryReady = false;
   String? _libraryFilePathCache;
   String? _libraryDataDirPath;
+  Timer? _annotationsSaveDebounce;
   final ValueNotifier<int> _libraryUiRefreshTick = ValueNotifier<int>(0);
   final Map<String, MindMapNode> _mindMapNodes = {
     'root': const MindMapNode(
@@ -123,8 +125,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
   @override
   void dispose() {
-    _saveAnnotations();
-    _saveScreenshotNotes();
+    _annotationsSaveDebounce?.cancel();
+    unawaited(_saveAnnotations());
+    unawaited(_saveScreenshotNotes());
     _libraryUiRefreshTick.dispose();
     _document?.close();
     super.dispose();
@@ -160,6 +163,8 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       }
       return;
     }
+
+    await _flushPendingSaves();
 
     late final PdfDocument doc;
     try {
@@ -506,6 +511,25 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
     await _storageService.saveAnnotations(path, _allAnnotations);
   }
 
+  void _scheduleAnnotationsSave() {
+    _annotationsSaveDebounce?.cancel();
+    _annotationsSaveDebounce = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_saveAnnotations());
+    });
+  }
+
+  Future<void> _flushPendingSaves() async {
+    _annotationsSaveDebounce?.cancel();
+    _annotationsSaveDebounce = null;
+    await _saveAnnotations();
+    await _saveScreenshotNotes();
+  }
+
+  void _updateAnnotationsForPage(int page, List<AnnotationItem> list) {
+    setState(() => _allAnnotations[page] = list);
+    _scheduleAnnotationsSave();
+  }
+
   Future<void> _loadAnnotations() async {
     final path = _annotationsFile;
     if (path == null) return;
@@ -562,6 +586,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         const SnackBar(content: Text('标注导入成功')),
       );
     }
+    await _saveAnnotations();
   }
 
   Future<void> _manualClearPickerTempFiles() async {
@@ -1137,7 +1162,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                           penWidth: _penWidth,
                           fontSize: _fontSize,
                           annotations: _allAnnotations[page] ?? const [],
-                          onChanged: (list) => setState(() => _allAnnotations[page] = list),
+                          onChanged: (list) => _updateAnnotationsForPage(page, list),
                           onSelectionCaptured: _onSelectionCaptured,
                         ),
                       ],
@@ -1159,21 +1184,22 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
                     if (!snap.hasData) {
                       return const CircularProgressIndicator();
                     }
+                    final page = _currentPage;
                     return SingleChildScrollView(
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: AnnotatablePageWidget(
-                          key: ValueKey('s_page_$_currentPage'),
-                          page: _currentPage,
+                          key: ValueKey('s_page_$page'),
+                          page: page,
                           imageBytes: snap.data!.bytes,
                           imageSize: snap.data!.size,
-                          focusedRect: _focusedRectByPage[_currentPage],
+                          focusedRect: _focusedRectByPage[page],
                           tool: _tool,
                           color: _color,
                           penWidth: _penWidth,
                           fontSize: _fontSize,
-                          annotations: _allAnnotations[_currentPage] ?? const [],
-                          onChanged: (list) => setState(() => _allAnnotations[_currentPage] = list),
+                          annotations: _allAnnotations[page] ?? const [],
+                          onChanged: (list) => _updateAnnotationsForPage(page, list),
                           onSelectionCaptured: _onSelectionCaptured,
                         ),
                       ),
