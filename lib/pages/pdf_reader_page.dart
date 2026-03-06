@@ -507,8 +507,9 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
         SnackBar(content: Text('')),
       );
     }
+    */
   }
-*/
+
   Future<Uint8List?> _captureSelectionPng({
     required int page,
     required Rect rect,
