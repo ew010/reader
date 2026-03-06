@@ -504,7 +504,7 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('截图已保存: $filePath')),
+        SnackBar(content: Text('')),
       );
     }
   }
