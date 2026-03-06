@@ -501,14 +501,14 @@ class _PdfReaderPageState extends State<PdfReaderPage> {
       }
     });
     _syncMindMapFromScreenshots();
-
+/*
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('')),
       );
     }
   }
-
+*/
   Future<Uint8List?> _captureSelectionPng({
     required int page,
     required Rect rect,
