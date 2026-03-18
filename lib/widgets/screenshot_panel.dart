@@ -100,27 +100,20 @@ class ScreenshotPanel extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                LayoutBuilder(
-                                  builder: (context, constraints) {
-                                    return Scrollbar(
-                                      thumbVisibility: true,
-                                      child: SingleChildScrollView(
-                                        scrollDirection: Axis.horizontal,
-                                        child: ConstrainedBox(
-                                          constraints: BoxConstraints(
-                                            minWidth: constraints.maxWidth,
-                                          ),
-                                          child: Image.file(
-                                            File(shot.path),
-                                            fit: BoxFit.none,
-                                            filterQuality: FilterQuality.high,
-                                            errorBuilder: (context, error, stackTrace) =>
-                                                const Text('图片加载失败'),
-                                          ),
-                                        ),
+                                ClipRect(
+                                  child: Scrollbar(
+                                    thumbVisibility: true,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: Image.file(
+                                        File(shot.path),
+                                        fit: BoxFit.none,
+                                        filterQuality: FilterQuality.high,
+                                        errorBuilder: (context, error, stackTrace) =>
+                                            const Text('图片加载失败'),
                                       ),
-                                    );
-                                  }
+                                    ),
+                                  ),
                                 ),
                                 const SizedBox(height: 6),
                                 Align(
